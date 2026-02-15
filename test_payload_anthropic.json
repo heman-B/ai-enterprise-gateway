@@ -1,0 +1,7 @@
+{
+  "messages": [
+    {"role": "user", "content": "Say hello in exactly 5 words"}
+  ],
+  "model": "claude-sonnet-4-5-20250929",
+  "residency_zone": "any"
+}

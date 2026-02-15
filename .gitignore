@@ -1,0 +1,102 @@
+# === SECRETS (NEVER COMMIT) ===
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*-credentials.json
+service-account*.json
+
+# === TERRAFORM ===
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+
+# === PYTHON ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.cache/
+venv/
+env/
+.venv/
+.env/
+ENV/
+*.egg
+MANIFEST
+
+# === TESTING ===
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# === DATABASE ===
+*.db
+*.sqlite
+*.sqlite3
+dump.sql
+*.dump
+
+# === DOCKER ===
+.docker/
+
+# === LOGS ===
+logs/
+*.log
+*.log.*
+
+# === IDE ===
+.vscode/
+.idea/
+.cursor/
+.claude/
+*.swp
+*.swo
+*~
+
+# === MONITORING DATA (local volumes) ===
+grafana-data/
+prometheus-data/
+pgdata/
+redisdata/
+
+# === OS ===
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# === TEMP ===
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+archive/
+
+# === PROJECT ARTIFACTS (reveals planning/bootstrap) ===
+project-1-enterprise-ai-gateway.md
+bootstrap-config.json
+docker key.md
+
+# === NODE (tooling) ===
+node_modules/

@@ -1,0 +1,113 @@
+[
+  {
+    "id": 1,
+    "text": "Frau Schmidt aus München hat die IBAN DE89370400440532013000 und Steuer-ID 86095742719. Wohnhaft in der Hauptstraße 42, 80331 München. Mobil: 0171 1234567.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Schmidt"},
+      {"type": "IBAN", "value": "DE89370400440532013000"},
+      {"type": "STEUER_ID", "value": "86095742719"},
+      {"type": "STRASSE", "value": "Hauptstraße 42"},
+      {"type": "PLZ", "value": "80331"},
+      {"type": "HANDYNUMMER", "value": "0171 1234567"}
+    ]
+  },
+  {
+    "id": 2,
+    "text": "Herr Müller (KFZ: M-AB 1234) mit IBAN DE44500105175407324931 erreichen Sie unter 0160 9876543. Adresse: Berliner Straße 15, 10115 Berlin.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Müller"},
+      {"type": "KFZ", "value": "M-AB 1234"},
+      {"type": "IBAN", "value": "DE44500105175407324931"},
+      {"type": "HANDYNUMMER", "value": "0160 9876543"},
+      {"type": "STRASSE", "value": "Berliner Straße 15"},
+      {"type": "PLZ", "value": "10115"}
+    ]
+  },
+  {
+    "id": 3,
+    "text": "Anna Weber, Steuer-ID: 47036892816, wohnt am Rosenweg 8 in 22305 Hamburg. Bankverbindung: DE75120300001020304050.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Anna Weber"},
+      {"type": "STEUER_ID", "value": "47036892816"},
+      {"type": "STRASSE", "value": "Rosenweg 8"},
+      {"type": "PLZ", "value": "22305"},
+      {"type": "IBAN", "value": "DE75120300001020304050"}
+    ]
+  },
+  {
+    "id": 4,
+    "text": "Thomas Fischer erreichen Sie mobil unter +49172 3456789. Seine IBAN lautet DE91100000000123456789 (Steuer-ID: 26954371827).",
+    "expected_entities": [
+      {"type": "NAME", "value": "Thomas Fischer"},
+      {"type": "HANDYNUMMER", "value": "+49172 3456789"},
+      {"type": "IBAN", "value": "DE91100000000123456789"},
+      {"type": "STEUER_ID", "value": "26954371827"}
+    ]
+  },
+  {
+    "id": 5,
+    "text": "Laura Becker mit Kennzeichen B-LB 5678 wohnt in der Parkstraße 23, 50667 Köln. Kontakt: 0151 2468135.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Laura Becker"},
+      {"type": "KFZ", "value": "B-LB 5678"},
+      {"type": "STRASSE", "value": "Parkstraße 23"},
+      {"type": "PLZ", "value": "50667"},
+      {"type": "HANDYNUMMER", "value": "0151 2468135"}
+    ]
+  },
+  {
+    "id": 6,
+    "text": "Bankdaten von Meyer: IBAN DE89370400440532013000, Steuer-ID 47036892816. Adresse: Lindenallee 9, 60311 Frankfurt.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Meyer"},
+      {"type": "IBAN", "value": "DE89370400440532013000"},
+      {"type": "STEUER_ID", "value": "47036892816"},
+      {"type": "STRASSE", "value": "Lindenallee 9"},
+      {"type": "PLZ", "value": "60311"}
+    ]
+  },
+  {
+    "id": 7,
+    "text": "KFZ HH-AB 9876 gehört Frau Schneider (Steuer-ID 86095742719), wohnhaft Gartenweg 14 in 20095 Hamburg.",
+    "expected_entities": [
+      {"type": "KFZ", "value": "HH-AB 9876"},
+      {"type": "NAME", "value": "Schneider"},
+      {"type": "STEUER_ID", "value": "86095742719"},
+      {"type": "STRASSE", "value": "Gartenweg 14"},
+      {"type": "PLZ", "value": "20095"}
+    ]
+  },
+  {
+    "id": 8,
+    "text": "Rechnungsadresse: Klaus Wagner, Mozartstraße 5, 70173 Stuttgart. Tel: 0176 1357924. IBAN: DE44500105175407324931.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Klaus Wagner"},
+      {"type": "STRASSE", "value": "Mozartstraße 5"},
+      {"type": "PLZ", "value": "70173"},
+      {"type": "HANDYNUMMER", "value": "0176 1357924"},
+      {"type": "IBAN", "value": "DE44500105175407324931"}
+    ]
+  },
+  {
+    "id": 9,
+    "text": "Sabine Hoffmann (Steuer-ID: 26954371827) hat KFZ MUC-SH 4321 und wohnt Kirchplatz 7, 81667 München.",
+    "expected_entities": [
+      {"type": "NAME", "value": "Sabine Hoffmann"},
+      {"type": "STEUER_ID", "value": "26954371827"},
+      {"type": "KFZ", "value": "MUC-SH 4321"},
+      {"type": "STRASSE", "value": "Kirchplatz 7"},
+      {"type": "PLZ", "value": "81667"}
+    ]
+  },
+  {
+    "id": 10,
+    "text": "Überweisung an: DE75120300001020304050 (Empfänger: Michael Braun, Steuer-ID 47036892816). Adresse: Bahnhofstraße 88, 90402 Nürnberg.",
+    "expected_entities": [
+      {"type": "IBAN", "value": "DE75120300001020304050"},
+      {"type": "NAME", "value": "Michael Braun"},
+      {"type": "STEUER_ID", "value": "47036892816"},
+      {"type": "STRASSE", "value": "Bahnhofstraße 88"},
+      {"type": "PLZ", "value": "90402"}
+    ]
+  }
+]

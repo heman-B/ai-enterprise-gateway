@@ -1,0 +1,6 @@
+{
+  "messages": [
+    {"role": "user", "content": "Say hello in exactly 5 words"}
+  ],
+  "model": "gpt-4o-mini"
+}

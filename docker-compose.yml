@@ -1,0 +1,55 @@
+# LLM Gateway: Docker Compose Konfiguration
+# Dienste: gateway (FastAPI) + redis (Rate-Limiting)
+# Start: docker compose up --build
+
+version: "3.9"
+
+services:
+  gateway:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM-Anbieter-Schlüssel (mindestens einen setzen)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      # Ollama: Standard auf Host-Machine (docker.internal für Mac/Windows)
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Interne Dienste
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=/app/data/gateway.db
+      # Konfiguration
+      - EU_RESIDENCY_REQUIRED=${EU_RESIDENCY_REQUIRED:-false}
+      - DEFAULT_RATE_LIMIT_PER_MINUTE=${DEFAULT_RATE_LIMIT_PER_MINUTE:-100}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - gateway_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+volumes:
+  gateway_data:
+    driver: local

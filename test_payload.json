@@ -1,0 +1,6 @@
+{
+  "messages": [
+    {"role": "user", "content": "Say hello in exactly 5 words"}
+  ],
+  "residency_zone": "eu"
+}

@@ -1,0 +1,37 @@
+# ⚠️ VERIFY BEFORE USE: All versions below are from training data (Jan 2025 cutoff).
+# Run `pip index versions <package>` or check pypi.org before deploying to production.
+# LLM Gateway — Python-Abhängigkeiten
+# Versionen gepinnt für reproduzierbare Builds
+
+# Web-Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Async HTTP-Client für Provider-Aufrufe
+httpx==0.28.1
+
+# Circuit-Breaker und Retry-Logik
+tenacity==9.0.0
+
+# Token-Zählung (OpenAI-kompatibel, auch für Schätzung anderer Provider)
+tiktoken==0.8.0
+
+# Rate-Limiting via Redis
+redis==5.2.1
+
+# Async SQLite für Audit-Log und API-Schlüssel
+aiosqlite==0.21.0
+
+# Datenvalidierung (v2 required)
+pydantic==2.10.3
+
+# Umgebungsvariablen aus .env laden
+python-dotenv==1.0.1
+
+# PII-Erkennung: Checksummen-Validierung für IBAN/Steuer-ID
+python-stdnum==1.20
+
+# Test-Abhängigkeiten
+pytest==8.3.4
+pytest-asyncio==0.24.0
+respx==0.21.1
