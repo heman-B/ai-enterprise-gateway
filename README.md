@@ -1,5 +1,11 @@
 # Enterprise AI Gateway
 
+[![Tests](https://img.shields.io/badge/tests-79%2F79_passing-brightgreen)](./tests)
+[![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker)](./Dockerfile)
+
+> **Status:** Active development. Core gateway working, monitoring dashboard next.
+
 A production-ready API gateway for routing requests across multiple LLM providers (Anthropic, OpenAI, Gemini, Ollama) with cost optimization, automatic failover, and DSGVO-compliant PII detection for German enterprise clients.
 
 ## Overview
