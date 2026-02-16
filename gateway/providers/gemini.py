@@ -19,22 +19,26 @@ from .base import BaseProvider
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 # Interne Modellnamen (Gemini verwendet andere Bezeichnungen als Gateway)
+# Stand: Feb 2026 — gemini-2.0-flash wird am 03.03.2026 eingestellt
 _MODEL_MAP = {
-    "gemini-flash":     "gemini-2.0-flash",       # Gemini 2.0 Flash (default fast)
-    "gemini-pro":       "gemini-1.5-pro",          # 2.0 Pro not GA yet — use 1.5 Pro
-    "gemini-2.0-flash": "gemini-2.0-flash",
-    "gemini-1.5-flash": "gemini-1.5-flash",
-    "gemini-1.5-pro":   "gemini-1.5-pro",
+    "gemini-flash":          "gemini-2.5-flash-lite",  # 15 RPM, 1000 RPD (bestes Free-Tier-Limit)
+    "gemini-pro":            "gemini-2.5-flash",       # 10 RPM, 250 RPD
+    "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+    "gemini-2.5-flash":      "gemini-2.5-flash",
+    # Legacy-Redirects (2.0/1.5 → 2.5)
+    "gemini-2.0-flash":      "gemini-2.5-flash-lite",
+    "gemini-1.5-flash":      "gemini-2.5-flash-lite",
+    "gemini-1.5-pro":        "gemini-2.5-flash",
 }
 
 
 class GeminiProvider(BaseProvider):
     """
     Google Gemini-Anbieter.
-    Unterstützt: gemini-flash (gemini-1.5-flash), gemini-pro (gemini-1.5-pro)
+    Unterstützt: gemini-flash (gemini-2.5-flash-lite), gemini-pro (gemini-2.5-flash)
     API: Gemini generateContent (eigenes Format — Konvertierung erforderlich)
     """
 

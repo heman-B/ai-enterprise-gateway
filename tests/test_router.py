@@ -91,15 +91,15 @@ class TestCostPolicy:
         cost = self.policy.estimate_cost(Provider.OPENAI, "gpt-9000", 1000, 500)
         assert cost == 0.0
 
-    def test_gemini_flash_cheapest_for_simple(self):
-        """Gemini Flash ist günstigster Provider für einfache Anfragen."""
+    def test_gpt5_nano_cheapest_for_simple(self):
+        """GPT-5 Nano ist günstigster Provider für einfache Anfragen (seit 2.5-Preisanpassung)."""
         provider, model = self.policy.select_cheapest(
             [Provider.ANTHROPIC, Provider.OPENAI, Provider.GEMINI],
             complexity="simple",
             token_estimate=200,
         )
-        assert provider == Provider.GEMINI
-        assert model == "gemini-flash"  # Using gemini-flash (not 2.0-flash)
+        assert provider == Provider.OPENAI
+        assert model == "gpt-5-nano"
 
     def test_ollama_wins_when_available(self):
         """Ollama ($0) schlägt alle kostenpflichtigen Provider."""

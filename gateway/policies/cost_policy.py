@@ -15,8 +15,8 @@ PRICING_TABLE: dict[tuple[Provider, str], tuple[float, float]] = {
     (Provider.OPENAI,    "gpt-5-nano"):                 (0.00005, 0.0004),  # Aug 2025, cheapest
     (Provider.OPENAI,    "gpt-4o-mini"):                (0.00015, 0.0006),
     (Provider.OPENAI,    "gpt-4o"):                     (0.0025,  0.01),
-    (Provider.GEMINI,    "gemini-flash"):               (0.00007, 0.0003),
-    (Provider.GEMINI,    "gemini-pro"):                 (0.00125, 0.005),
+    (Provider.GEMINI,    "gemini-flash"):               (0.0001,  0.0004),   # gemini-2.5-flash-lite
+    (Provider.GEMINI,    "gemini-pro"):                 (0.0003,  0.0025),   # gemini-2.5-flash
     (Provider.OLLAMA,    "llama3.2"):                   (0.0,     0.0),
 }
 

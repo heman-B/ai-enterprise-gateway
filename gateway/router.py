@@ -39,10 +39,13 @@ MODEL_TO_PROVIDER: dict[str, tuple[Provider, str]] = {
     "gpt-4-turbo": (Provider.OPENAI, "gpt-4-turbo"),
     "gpt-4": (Provider.OPENAI, "gpt-4"),
     "gpt-3.5-turbo": (Provider.OPENAI, "gpt-3.5-turbo"),
-    # Gemini models
-    "gemini-2.0-flash": (Provider.GEMINI, "gemini-2.0-flash"),
+    # Gemini models (2.5 — 2.0 wird am 03.03.2026 eingestellt)
+    "gemini-2.5-flash-lite": (Provider.GEMINI, "gemini-2.5-flash-lite"),
+    "gemini-2.5-flash": (Provider.GEMINI, "gemini-2.5-flash"),
     "gemini-flash": (Provider.GEMINI, "gemini-flash"),
     "gemini-pro": (Provider.GEMINI, "gemini-pro"),
+    # Legacy-Redirects
+    "gemini-2.0-flash": (Provider.GEMINI, "gemini-2.0-flash"),
     "gemini-1.5-pro": (Provider.GEMINI, "gemini-1.5-pro"),
     # Ollama models
     "llama3.2": (Provider.OLLAMA, "llama3.2"),
@@ -220,7 +223,11 @@ class RoutingEngine:
                 candidate_providers
             )
 
-        # API-Aufruf mit Tenacity-Retry (in Provider implementiert)
+        # API-Aufruf mit automatischem Fallback bei Fehler
+        response = None
+        last_error = None
+
+        # Erste Versuch mit ausgewähltem Provider
         provider_client = self._factory.get(selected_provider)
         start_time = time.monotonic()
         try:
@@ -235,7 +242,36 @@ class RoutingEngine:
         except Exception as exc:
             self._fallback_policy.record_failure(selected_provider)
             logger.error("Provider %s fehlgeschlagen: %s", selected_provider.value, exc)
-            raise
+            last_error = exc
+
+            # Fallback-Versuch wenn primärer Provider fehlschlägt
+            try:
+                fallback_provider, fallback_model = await self._fallback_policy.get_fallback(
+                    candidate_providers
+                )
+                logger.warning(
+                    "Fallback-Versuch: %s → %s", selected_provider.value, fallback_provider.value
+                )
+                fallback_client = self._factory.get(fallback_provider)
+                start_time = time.monotonic()
+                response = await fallback_client.complete(request, fallback_model)
+                latency_ms = (time.monotonic() - start_time) * 1000
+                self._latency_policy.record(fallback_provider, latency_ms)
+                self._fallback_policy.record_success(fallback_provider)
+                logger.info(
+                    "✅ Fallback erfolgreich: %s/%s in %.0fms",
+                    fallback_provider.value, fallback_model, latency_ms
+                )
+                # Fallback erfolgreich → verwende Fallback-Provider für Kosten/Audit
+                selected_provider, selected_model = fallback_provider, fallback_model
+            except Exception as fallback_exc:
+                logger.error("Fallback fehlgeschlagen: %s", fallback_exc)
+                # Beide Provider gescheitert → ursprünglichen Fehler werfen
+                raise last_error
+
+        # Wenn kein Response (sollte nicht passieren), Fehler werfen
+        if response is None:
+            raise last_error or Exception("Keine Antwort von Providern")
 
         # Kosten berechnen und in Antwort eintragen
         cost_usd = self._cost_policy.calculate_cost(
