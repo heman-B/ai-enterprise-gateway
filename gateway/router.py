@@ -159,6 +159,14 @@ class RoutingEngine:
         # Stufe 1: Datenhaltungsprüfung (PRIORITÄT 1 — nicht verhandelbar)
         eu_only = self._residency_policy.requires_eu_only(request.residency_zone)
         candidate_providers = self._residency_policy.filter_providers(eu_only)
+
+        # Production-Filter: Ollama nur lokal verfügbar (nicht auf Render/Cloud)
+        import os
+        is_production = os.getenv("DATABASE_URL", "").startswith("postgres")
+        if is_production and Provider.OLLAMA in candidate_providers:
+            candidate_providers.remove(Provider.OLLAMA)
+            logger.info("Ollama deaktiviert (Production-Modus)")
+
         if eu_only:
             logger.info("EU-Datenhaltung aktiv: %d Provider verfügbar", len(candidate_providers))
 
