@@ -74,6 +74,61 @@ async def health_check(request: Request) -> HealthResponse:
     return HealthResponse(status="healthy", providers=provider_status)
 
 
+@app.get("/ready", tags=["Monitoring"])
+async def readiness_check(request: Request) -> dict:
+    """
+    Readiness-Check für Render: Prüft DB + Redis Konnektivität.
+    Returns HTTP 200 wenn bereit, HTTP 503 wenn nicht bereit.
+    """
+    import os
+
+    from fastapi import HTTPException
+
+    checks = {"database": False, "redis": False}
+
+    # Database-Check
+    try:
+        audit_logger = request.app.state.audit_logger
+        db_url = os.getenv("DATABASE_URL", "./gateway.db")
+
+        if db_url.startswith("postgres"):
+            import asyncpg
+
+            conn = await asyncpg.connect(db_url)
+            await conn.fetchval("SELECT 1")
+            await conn.close()
+        else:
+            import aiosqlite
+
+            async with aiosqlite.connect(db_url) as db:
+                await db.execute("SELECT 1")
+
+        checks["database"] = True
+    except Exception as e:
+        logger.error(f"Database readiness check failed: {e}")
+
+    # Redis-Check
+    try:
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            import redis.asyncio as aioredis
+
+            redis_client = await aioredis.from_url(redis_url)
+            await redis_client.ping()
+            await redis_client.close()
+            checks["redis"] = True
+        else:
+            # Redis optional für lokale Entwicklung
+            checks["redis"] = True
+    except Exception as e:
+        logger.error(f"Redis readiness check failed: {e}")
+
+    if all(checks.values()):
+        return {"status": "ready", "checks": checks}
+    else:
+        raise HTTPException(status_code=503, detail={"status": "not ready", "checks": checks})
+
+
 @app.post(
     "/v1/chat/completions",
     response_model=ChatCompletionResponse,

@@ -7,7 +7,6 @@ import logging
 import os
 import secrets
 
-import aiosqlite
 from fastapi import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -19,7 +18,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "./gateway.db")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")  # Admin-Schlüssel für Bootstrap
 
 # Endpunkte ohne Authentifizierungspflicht
-PUBLIC_PATHS = frozenset({"/health", "/docs", "/openapi.json", "/redoc"})
+PUBLIC_PATHS = frozenset({"/health", "/ready", "/docs", "/openapi.json", "/redoc"})
+
+
+def _is_postgres(db_url: str) -> bool:
+    """Prüft, ob DATABASE_URL auf PostgreSQL zeigt."""
+    return db_url.startswith("postgres://") or db_url.startswith("postgresql://")
 
 
 class APIKeyAuthMiddleware(BaseHTTPMiddleware):
@@ -36,13 +40,28 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         """
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         try:
-            async with aiosqlite.connect(DATABASE_URL) as db:
-                async with db.execute(
-                    "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND is_active = 1",
-                    (key_hash,),
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    return row[0] if row else None
+            if _is_postgres(DATABASE_URL):
+                import asyncpg
+
+                conn = await asyncpg.connect(DATABASE_URL)
+                try:
+                    row = await conn.fetchrow(
+                        "SELECT tenant_id FROM api_keys WHERE key_hash = $1 AND is_active = 1",
+                        key_hash,
+                    )
+                    return row["tenant_id"] if row else None
+                finally:
+                    await conn.close()
+            else:
+                import aiosqlite
+
+                async with aiosqlite.connect(DATABASE_URL) as db:
+                    async with db.execute(
+                        "SELECT tenant_id FROM api_keys WHERE key_hash = ? AND is_active = 1",
+                        (key_hash,),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        return row[0] if row else None
         except Exception as exc:
             logger.error("Datenbankfehler bei API-Key-Prüfung: %s", exc)
             return None
@@ -96,16 +115,40 @@ async def create_api_key(tenant_id: str, rate_limit: int = 100) -> str:
     raw_key = f"lgw_{secrets.token_urlsafe(32)}"
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        await db.execute(
-            """
-            INSERT OR REPLACE INTO api_keys
-                (tenant_id, key_hash, is_active, rate_limit_per_minute)
-            VALUES (?, ?, 1, ?)
-            """,
-            (tenant_id, key_hash, rate_limit),
-        )
-        await db.commit()
+    if _is_postgres(DATABASE_URL):
+        import asyncpg
+
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            # PostgreSQL: INSERT ... ON CONFLICT
+            await conn.execute(
+                """
+                INSERT INTO api_keys
+                    (tenant_id, key_hash, is_active, rate_limit_per_minute)
+                VALUES ($1, $2, 1, $3)
+                ON CONFLICT (key_hash) DO UPDATE SET
+                    is_active = 1,
+                    rate_limit_per_minute = $3
+                """,
+                tenant_id,
+                key_hash,
+                rate_limit,
+            )
+        finally:
+            await conn.close()
+    else:
+        import aiosqlite
+
+        async with aiosqlite.connect(DATABASE_URL) as db:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO api_keys
+                    (tenant_id, key_hash, is_active, rate_limit_per_minute)
+                VALUES (?, ?, 1, ?)
+                """,
+                (tenant_id, key_hash, rate_limit),
+            )
+            await db.commit()
 
     logger.info("Neuer API-Schlüssel erstellt für Mandant: %s", tenant_id)
     # Klartext-Schlüssel nur hier zurückgeben — wird danach nie wieder verfügbar
@@ -114,13 +157,29 @@ async def create_api_key(tenant_id: str, rate_limit: int = 100) -> str:
 
 async def revoke_api_key(tenant_id: str) -> int:
     """Alle API-Schlüssel eines Mandanten deaktivieren. Gibt Anzahl deaktivierter Schlüssel zurück."""
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        cursor = await db.execute(
-            "UPDATE api_keys SET is_active = 0 WHERE tenant_id = ?",
-            (tenant_id,),
-        )
-        await db.commit()
-        count = cursor.rowcount
+    if _is_postgres(DATABASE_URL):
+        import asyncpg
+
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            result = await conn.execute(
+                "UPDATE api_keys SET is_active = 0 WHERE tenant_id = $1",
+                tenant_id,
+            )
+            # PostgreSQL execute() gibt "UPDATE N" zurück
+            count = int(result.split()[-1]) if result else 0
+        finally:
+            await conn.close()
+    else:
+        import aiosqlite
+
+        async with aiosqlite.connect(DATABASE_URL) as db:
+            cursor = await db.execute(
+                "UPDATE api_keys SET is_active = 0 WHERE tenant_id = ?",
+                (tenant_id,),
+            )
+            await db.commit()
+            count = cursor.rowcount
 
     logger.info("%d Schlüssel für Mandant %s deaktiviert", count, tenant_id)
     return count

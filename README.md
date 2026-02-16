@@ -46,9 +46,9 @@ Built for enterprise use cases where you need reliability, cost control, and reg
 
 - **API Framework:** FastAPI (async/await throughout)
 - **Providers:** Direct HTTP via httpx (no SDK dependencies)
-- **Storage:** PostgreSQL + Redis
+- **Storage:** PostgreSQL (production) / SQLite (dev) + Redis
 - **PII Detection:** Regex patterns + spaCy de_core_news_sm
-- **Deployment:** Docker + docker-compose, targeting Azure Container Apps
+- **Deployment:** Docker + Render (free tier), Azure Container Apps-ready
 
 ## Quick Start
 
@@ -111,11 +111,87 @@ Run with `pytest tests/ -v`
 - Routing overhead: <5ms
 - Cost savings: ~50% vs always using premium models (Sonnet/GPT-4)
 
+## Deployment to Render (Free Tier)
+
+This gateway can be deployed to Render's free tier ($0/month):
+- 1GB PostgreSQL database (free forever)
+- 25MB Redis (Valkey, Redis-compatible, free forever)
+- Web service with HTTPS (free tier)
+
+### Prerequisites
+
+1. **GitHub Repository:** Push your code to GitHub
+2. **Render Account:** Sign up at [render.com](https://render.com)
+3. **API Keys:** Have your LLM provider API keys ready
+
+### Deploy Steps
+
+1. **Connect to Render:**
+   - Go to [Render Dashboard](https://dashboard.render.com)
+   - Click "New" → "Blueprint"
+   - Connect your GitHub repository
+   - Render will auto-detect `render.yaml` and create:
+     - PostgreSQL database (`gateway-db`)
+     - Redis instance (`gateway-redis`)
+     - Web service (`enterprise-ai-gateway`)
+
+2. **Set Secrets:**
+   In the Render dashboard, add environment variables:
+   ```
+   OPENAI_API_KEY=sk-...
+   ANTHROPIC_API_KEY=sk-ant-...
+   GEMINI_API_KEY=AI...
+   ```
+   (ADMIN_API_KEY and DATABASE_URL are auto-generated)
+
+3. **Wait for Deployment:**
+   - First deploy takes 5-10 minutes
+   - Render builds the Docker image
+   - Initializes PostgreSQL schema
+   - Starts the web service
+
+4. **Test Deployment:**
+   ```bash
+   # Health check
+   curl https://enterprise-ai-gateway.onrender.com/health
+
+   # Readiness check (DB + Redis)
+   curl https://enterprise-ai-gateway.onrender.com/ready
+   ```
+
+5. **Create API Key:**
+   ```bash
+   curl -X POST https://enterprise-ai-gateway.onrender.com/admin/keys \
+     -H "Content-Type: application/json" \
+     -d '{"tenant_id": "my-app", "rate_limit_per_minute": 100}'
+   ```
+
+### Auto-Deploy on Git Push
+
+After initial setup, every `git push origin main` triggers a new deployment automatically.
+
+### Cost Breakdown
+
+**Render Free Tier:**
+- Web service: $0/month (750 hours free)
+- PostgreSQL (1GB): $0/month (forever free)
+- Redis (25MB): $0/month (forever free)
+
+**Total: $0/month** ✅
+
+### Limits on Free Tier
+
+- Web service spins down after 15 minutes of inactivity (cold start: ~30s)
+- PostgreSQL: 1GB storage, 97 connections
+- Redis: 25MB memory (enough for ~10K rate limit entries)
+
+For production workloads, upgrade to Render's paid tiers ($7-25/month).
+
 ## Roadmap
 
 Next up:
+- ✅ Production deployment (Render)
 - Prometheus + Grafana monitoring dashboard
-- Terraform for Azure Container Apps deployment
 - GitHub Actions CI/CD pipeline
 - MCP server integration
 

@@ -7,11 +7,14 @@ import os
 import time
 import uuid
 
-import aiosqlite
-
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "./gateway.db")
+
+
+def _is_postgres(db_url: str) -> bool:
+    """Prüft, ob DATABASE_URL auf PostgreSQL zeigt."""
+    return db_url.startswith("postgres://") or db_url.startswith("postgresql://")
 
 
 class AuditLogger:
@@ -30,48 +33,93 @@ class AuditLogger:
 
     async def initialize(self) -> None:
         """Datenbankschema erstellen (idempotent — sicher für mehrfachen Aufruf)."""
-        async with aiosqlite.connect(self._db_url) as db:
-            # Audit-Log: append-only, keine Änderungen nach dem Insert
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS audit_log (
-                    id           TEXT PRIMARY KEY,
-                    request_id   TEXT NOT NULL,
-                    tenant_id    TEXT NOT NULL,
-                    timestamp    REAL NOT NULL,
-                    prompt_hash  TEXT NOT NULL,
-                    model        TEXT NOT NULL,
-                    provider     TEXT NOT NULL,
-                    tokens_in    INTEGER NOT NULL,
-                    tokens_out   INTEGER NOT NULL,
-                    cost_usd     REAL NOT NULL,
-                    pii_detected INTEGER NOT NULL DEFAULT 0,
-                    pii_types    TEXT
-                )
-                """
-            )
-            # Index für häufige Abfragen (Mandant, Zeitraum)
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, timestamp)"
-            )
-            # Index für PII-Tracking (Compliance-Berichte)
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_audit_pii ON audit_log(pii_detected, timestamp)"
-            )
+        if _is_postgres(self._db_url):
+            # PostgreSQL-Schema
+            import asyncpg
 
-            # API-Schlüssel-Tabelle (auch von api_key_auth.py verwendet)
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS api_keys (
-                    tenant_id              TEXT NOT NULL,
-                    key_hash               TEXT PRIMARY KEY,
-                    is_active              INTEGER NOT NULL DEFAULT 1,
-                    rate_limit_per_minute  INTEGER NOT NULL DEFAULT 100,
-                    created_at             REAL NOT NULL DEFAULT (unixepoch('now'))
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                # Audit-Log: append-only
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_log (
+                        id           TEXT PRIMARY KEY,
+                        request_id   TEXT NOT NULL,
+                        tenant_id    TEXT NOT NULL,
+                        timestamp    DOUBLE PRECISION NOT NULL,
+                        prompt_hash  TEXT NOT NULL,
+                        model        TEXT NOT NULL,
+                        provider     TEXT NOT NULL,
+                        tokens_in    INTEGER NOT NULL,
+                        tokens_out   INTEGER NOT NULL,
+                        cost_usd     DOUBLE PRECISION NOT NULL,
+                        pii_detected INTEGER NOT NULL DEFAULT 0,
+                        pii_types    TEXT
+                    )
+                    """
                 )
-                """
-            )
-            await db.commit()
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, timestamp)"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_audit_pii ON audit_log(pii_detected, timestamp)"
+                )
+
+                # API-Schlüssel-Tabelle
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        tenant_id              TEXT NOT NULL,
+                        key_hash               TEXT PRIMARY KEY,
+                        is_active              INTEGER NOT NULL DEFAULT 1,
+                        rate_limit_per_minute  INTEGER NOT NULL DEFAULT 100,
+                        created_at             DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                    )
+                    """
+                )
+            finally:
+                await conn.close()
+        else:
+            # SQLite-Schema (dev)
+            import aiosqlite
+
+            async with aiosqlite.connect(self._db_url) as db:
+                await db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_log (
+                        id           TEXT PRIMARY KEY,
+                        request_id   TEXT NOT NULL,
+                        tenant_id    TEXT NOT NULL,
+                        timestamp    REAL NOT NULL,
+                        prompt_hash  TEXT NOT NULL,
+                        model        TEXT NOT NULL,
+                        provider     TEXT NOT NULL,
+                        tokens_in    INTEGER NOT NULL,
+                        tokens_out   INTEGER NOT NULL,
+                        cost_usd     REAL NOT NULL,
+                        pii_detected INTEGER NOT NULL DEFAULT 0,
+                        pii_types    TEXT
+                    )
+                    """
+                )
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, timestamp)"
+                )
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_audit_pii ON audit_log(pii_detected, timestamp)"
+                )
+                await db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS api_keys (
+                        tenant_id              TEXT NOT NULL,
+                        key_hash               TEXT PRIMARY KEY,
+                        is_active              INTEGER NOT NULL DEFAULT 1,
+                        rate_limit_per_minute  INTEGER NOT NULL DEFAULT 100,
+                        created_at             REAL NOT NULL DEFAULT (unixepoch('now'))
+                    )
+                    """
+                )
+                await db.commit()
 
         logger.info("Audit-Log-Datenbank initialisiert: %s", self._db_url)
 
@@ -99,16 +147,19 @@ class AuditLogger:
         """
         pii_types_json = ",".join(sorted(set(pii_types))) if pii_types else None
 
-        async with aiosqlite.connect(self._db_url) as db:
-            await db.execute(
-                """
-                INSERT INTO audit_log
-                    (id, request_id, tenant_id, timestamp, prompt_hash,
-                     model, provider, tokens_in, tokens_out, cost_usd,
-                     pii_detected, pii_types)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
+        if _is_postgres(self._db_url):
+            import asyncpg
+
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO audit_log
+                        (id, request_id, tenant_id, timestamp, prompt_hash,
+                         model, provider, tokens_in, tokens_out, cost_usd,
+                         pii_detected, pii_types)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    """,
                     str(uuid.uuid4()),
                     request_id,
                     tenant_id,
@@ -121,9 +172,37 @@ class AuditLogger:
                     cost_usd,
                     1 if pii_detected else 0,
                     pii_types_json,
-                ),
-            )
-            await db.commit()
+                )
+            finally:
+                await conn.close()
+        else:
+            import aiosqlite
+
+            async with aiosqlite.connect(self._db_url) as db:
+                await db.execute(
+                    """
+                    INSERT INTO audit_log
+                        (id, request_id, tenant_id, timestamp, prompt_hash,
+                         model, provider, tokens_in, tokens_out, cost_usd,
+                         pii_detected, pii_types)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        request_id,
+                        tenant_id,
+                        time.time(),
+                        prompt_hash,
+                        model,
+                        provider,
+                        tokens_in,
+                        tokens_out,
+                        cost_usd,
+                        1 if pii_detected else 0,
+                        pii_types_json,
+                    ),
+                )
+                await db.commit()
 
     async def get_tenant_usage(
         self, tenant_id: str, since_timestamp: float | None = None
@@ -133,25 +212,54 @@ class AuditLogger:
         Nützlich für Kostenberichte und Abrechnungsintegration.
         """
         since = since_timestamp or (time.time() - 86400)  # Standard: letzte 24 Stunden
-        async with aiosqlite.connect(self._db_url) as db:
-            async with db.execute(
-                """
-                SELECT
-                    COUNT(*)         AS request_count,
-                    SUM(tokens_in)   AS total_tokens_in,
-                    SUM(tokens_out)  AS total_tokens_out,
-                    SUM(cost_usd)    AS total_cost_usd,
-                    SUM(pii_detected) AS pii_count,
-                    model,
-                    provider
-                FROM audit_log
-                WHERE tenant_id = ? AND timestamp >= ?
-                GROUP BY model, provider
-                ORDER BY total_cost_usd DESC
-                """,
-                (tenant_id, since),
-            ) as cursor:
-                rows = await cursor.fetchall()
+
+        if _is_postgres(self._db_url):
+            import asyncpg
+
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        COUNT(*)         AS request_count,
+                        SUM(tokens_in)   AS total_tokens_in,
+                        SUM(tokens_out)  AS total_tokens_out,
+                        SUM(cost_usd)    AS total_cost_usd,
+                        SUM(pii_detected) AS pii_count,
+                        model,
+                        provider
+                    FROM audit_log
+                    WHERE tenant_id = $1 AND timestamp >= $2
+                    GROUP BY model, provider
+                    ORDER BY total_cost_usd DESC
+                    """,
+                    tenant_id,
+                    since,
+                )
+            finally:
+                await conn.close()
+        else:
+            import aiosqlite
+
+            async with aiosqlite.connect(self._db_url) as db:
+                async with db.execute(
+                    """
+                    SELECT
+                        COUNT(*)         AS request_count,
+                        SUM(tokens_in)   AS total_tokens_in,
+                        SUM(tokens_out)  AS total_tokens_out,
+                        SUM(cost_usd)    AS total_cost_usd,
+                        SUM(pii_detected) AS pii_count,
+                        model,
+                        provider
+                    FROM audit_log
+                    WHERE tenant_id = ? AND timestamp >= ?
+                    GROUP BY model, provider
+                    ORDER BY total_cost_usd DESC
+                    """,
+                    (tenant_id, since),
+                ) as cursor:
+                    rows = await cursor.fetchall()
 
         return {
             "tenant_id": tenant_id,
@@ -184,28 +292,58 @@ class AuditLogger:
             - Zeitreihe (PII-Erkennungen pro Tag)
         """
         since = since_timestamp or (time.time() - 2592000)  # Standard: letzte 30 Tage
-        async with aiosqlite.connect(self._db_url) as db:
-            # Gesamt-PII-Statistiken
+
+        if _is_postgres(self._db_url):
+            import asyncpg
+
+            # PostgreSQL verwendet $1, $2, ... statt ?
             where_clause = "WHERE pii_detected = 1"
-            params: tuple = ()
+            params: list = []
+            if tenant_id:
+                where_clause += " AND tenant_id = $1"
+                params.append(tenant_id)
+            if since_timestamp:
+                where_clause += f" AND timestamp >= ${len(params) + 1}"
+                params.append(since)
+
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                pii_rows = await conn.fetch(
+                    f"""
+                    SELECT
+                        COUNT(*)           AS total_pii_requests,
+                        pii_types
+                    FROM audit_log
+                    {where_clause}
+                    """,
+                    *params,
+                )
+            finally:
+                await conn.close()
+        else:
+            import aiosqlite
+
+            where_clause = "WHERE pii_detected = 1"
+            params_tuple: tuple = ()
             if tenant_id:
                 where_clause += " AND tenant_id = ?"
-                params = (tenant_id,)
+                params_tuple = (tenant_id,)
             if since_timestamp:
                 where_clause += f" AND timestamp >= ?"
-                params = params + (since,)
+                params_tuple = params_tuple + (since,)
 
-            async with db.execute(
-                f"""
-                SELECT
-                    COUNT(*)           AS total_pii_requests,
-                    pii_types
-                FROM audit_log
-                {where_clause}
-                """,
-                params,
-            ) as cursor:
-                pii_rows = await cursor.fetchall()
+            async with aiosqlite.connect(self._db_url) as db:
+                async with db.execute(
+                    f"""
+                    SELECT
+                        COUNT(*)           AS total_pii_requests,
+                        pii_types
+                    FROM audit_log
+                    {where_clause}
+                    """,
+                    params_tuple,
+                ) as cursor:
+                    pii_rows = await cursor.fetchall()
 
         # PII-Typ-Häufigkeiten extrahieren
         pii_type_counts: dict[str, int] = {}

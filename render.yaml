@@ -1,0 +1,48 @@
+# Render Infrastructure as Code
+# Defines all services for the Enterprise AI Gateway
+
+services:
+  # FastAPI Gateway (Web Service)
+  - type: web
+    name: enterprise-ai-gateway
+    runtime: docker
+    region: frankfurt  # EU region for DSGVO compliance
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gateway-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: gateway-redis
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: ANTHROPIC_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: ADMIN_API_KEY
+        generateValue: true  # Auto-generate secure admin key
+      - key: LOG_LEVEL
+        value: INFO
+    healthCheckPath: /health
+    autoDeploy: true  # Auto-deploy on git push
+
+databases:
+  # PostgreSQL Database (1GB free)
+  - name: gateway-db
+    databaseName: gateway
+    region: frankfurt
+    plan: free
+    ipAllowList: []  # Allow all (free tier restriction)
+
+# Redis Key-Value Store (25MB Valkey, Redis-compatible)
+  - name: gateway-redis
+    region: frankfurt
+    plan: free
+    maxmemoryPolicy: allkeys-lru  # Evict least recently used keys when full
+    ipAllowList: []  # Allow all (free tier restriction)

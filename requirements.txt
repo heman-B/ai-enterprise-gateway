@@ -19,8 +19,9 @@ tiktoken==0.8.0
 # Rate-Limiting via Redis
 redis==5.2.1
 
-# Async SQLite für Audit-Log und API-Schlüssel
-aiosqlite==0.21.0
+# Database drivers (SQLite for local dev, PostgreSQL for production)
+aiosqlite==0.21.0  # Local development
+asyncpg==0.30.0    # PostgreSQL for Render
 
 # Datenvalidierung (v2 required)
 pydantic==2.10.3
