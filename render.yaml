@@ -32,17 +32,18 @@ services:
     healthCheckPath: /health
     autoDeploy: true  # Auto-deploy on git push
 
+  # Redis Key-Value Store (25MB Valkey, Redis-compatible)
+  - type: redis
+    name: gateway-redis
+    region: frankfurt
+    plan: free
+    maxmemoryPolicy: allkeys-lru  # Evict least recently used keys when full
+    ipAllowList: []  # Allow all (free tier restriction)
+
 databases:
   # PostgreSQL Database (1GB free)
   - name: gateway-db
     databaseName: gateway
     region: frankfurt
     plan: free
-    ipAllowList: []  # Allow all (free tier restriction)
-
-# Redis Key-Value Store (25MB Valkey, Redis-compatible)
-  - name: gateway-redis
-    region: frankfurt
-    plan: free
-    maxmemoryPolicy: allkeys-lru  # Evict least recently used keys when full
     ipAllowList: []  # Allow all (free tier restriction)
