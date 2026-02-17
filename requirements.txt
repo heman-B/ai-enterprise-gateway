@@ -3,9 +3,9 @@
 # LLM Gateway — Python-Abhängigkeiten
 # Versionen gepinnt für reproduzierbare Builds
 
-# Web-Framework
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
+# Web-Framework (FastMCP benötigt kompatible Versionen)
+fastapi>=0.115.6
+uvicorn[standard]>=0.34.0
 
 # Async HTTP-Client für Provider-Aufrufe
 httpx==0.28.1
@@ -23,8 +23,8 @@ redis==5.2.1
 aiosqlite==0.21.0  # Local development
 asyncpg==0.30.0    # PostgreSQL for Render
 
-# Datenvalidierung (v2 required)
-pydantic==2.10.3
+# Datenvalidierung (v2 required, >=2.11.7 für FastMCP-Kompatibilität)
+pydantic>=2.11.7,<3
 
 # MCP-Server (Agent-Interface für Claude, Cursor, SAP Joule)
 fastmcp>=2.14,<3
