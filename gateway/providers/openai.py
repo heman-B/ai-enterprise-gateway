@@ -49,15 +49,17 @@ class OpenAIProvider(BaseProvider):
         """Chat-Completion über OpenAI Chat Completions API."""
         assert self._client is not None, "Provider nicht initialisiert"
 
-        # GPT-5+ erfordert max_completion_tokens statt max_tokens (API-Breaking-Change)
-        token_param = "max_completion_tokens" if model.startswith("gpt-5") else "max_tokens"
+        # GPT-5+ ist ein Reasoning-Modell: andere Parameter-API als GPT-4
+        is_gpt5 = model.startswith("gpt-5")
 
         payload = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in request.messages],
-            token_param: request.max_tokens,
-            "temperature": request.temperature,
+            "max_completion_tokens" if is_gpt5 else "max_tokens": request.max_tokens,
         }
+        # GPT-5 Reasoning-Modelle unterstützen temperature nicht (nur default=1)
+        if not is_gpt5:
+            payload["temperature"] = request.temperature
 
         response = await self._client.post(
             f"{OPENAI_API_BASE}/chat/completions",
