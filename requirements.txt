@@ -1,41 +1,39 @@
-# ⚠️ VERIFY BEFORE USE: All versions below are from training data (Jan 2025 cutoff).
-# Run `pip index versions <package>` or check pypi.org before deploying to production.
 # LLM Gateway — Python-Abhängigkeiten
-# Versionen gepinnt für reproduzierbare Builds
+# Minimale Versionsgrenzen statt exakter Pins (FastMCP benötigt neuere Versionen)
 
-# Web-Framework (FastMCP benötigt kompatible Versionen)
+# Web-Framework
 fastapi>=0.115.6
 uvicorn[standard]>=0.34.0
 
 # Async HTTP-Client für Provider-Aufrufe
-httpx==0.28.1
+httpx>=0.28.1
 
 # Circuit-Breaker und Retry-Logik
-tenacity==9.0.0
+tenacity>=9.0.0
 
-# Token-Zählung (OpenAI-kompatibel, auch für Schätzung anderer Provider)
-tiktoken==0.8.0
+# Token-Zählung (OpenAI-kompatibel)
+tiktoken>=0.8.0
 
 # Rate-Limiting via Redis
-redis==5.2.1
+redis>=5.2.1
 
-# Database drivers (SQLite for local dev, PostgreSQL for production)
-aiosqlite==0.21.0  # Local development
-asyncpg==0.30.0    # PostgreSQL for Render
+# Database drivers (SQLite for dev, PostgreSQL for prod)
+aiosqlite>=0.21.0
+asyncpg>=0.30.0
 
-# Datenvalidierung (v2 required, >=2.11.7 für FastMCP-Kompatibilität)
+# Datenvalidierung
 pydantic>=2.11.7,<3
 
 # MCP-Server (Agent-Interface für Claude, Cursor, SAP Joule)
 fastmcp>=2.14,<3
 
-# Umgebungsvariablen aus .env laden
-python-dotenv==1.0.1
+# Umgebungsvariablen
+python-dotenv>=1.1.0
 
-# PII-Erkennung: Checksummen-Validierung für IBAN/Steuer-ID
-python-stdnum==1.20
+# PII-Erkennung: Checksummen-Validierung
+python-stdnum>=1.20
 
 # Test-Abhängigkeiten
-pytest==8.3.4
-pytest-asyncio==0.24.0
-respx==0.21.1
+pytest>=8.3.4
+pytest-asyncio>=0.24.0
+respx>=0.21.1
