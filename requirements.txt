@@ -26,6 +26,9 @@ asyncpg==0.30.0    # PostgreSQL for Render
 # Datenvalidierung (v2 required)
 pydantic==2.10.3
 
+# MCP-Server (Agent-Interface für Claude, Cursor, SAP Joule)
+fastmcp>=2.14,<3
+
 # Umgebungsvariablen aus .env laden
 python-dotenv==1.0.1
 

@@ -9,6 +9,19 @@ import httpx
 from ..models import ChatCompletionRequest, ChatCompletionResponse
 
 
+def is_retryable_error(exc: BaseException) -> bool:
+    """
+    Nur bei transienten Fehlern erneut versuchen (5xx, Netzwerkfehler).
+    Client-Fehler (4xx) sofort weiterleiten → Router-Fallback aktiviert.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    # Netzwerk-/Verbindungsfehler sind immer retry-würdig
+    if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout)):
+        return True
+    return False
+
+
 class BaseProvider(ABC):
     """
     Abstrakte Basis für alle LLM-Anbieter-Implementierungen.

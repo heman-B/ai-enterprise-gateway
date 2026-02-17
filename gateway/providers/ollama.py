@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..models import (
     ChatCompletionRequest,
@@ -14,7 +14,7 @@ from ..models import (
     Choice,
     Usage,
 )
-from .base import BaseProvider
+from .base import BaseProvider, is_retryable_error
 
 # Standard-Ollama-URL (überschreibbar via Umgebungsvariable)
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
@@ -35,7 +35,7 @@ class OllamaProvider(BaseProvider):
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_exponential(multiplier=1, min=1, max=5),
-        retry=retry_if_exception_type(Exception),
+        retry=retry_if_exception(is_retryable_error),
         reraise=True,
     )
     async def complete(

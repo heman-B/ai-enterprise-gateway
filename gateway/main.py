@@ -18,6 +18,8 @@ from .models import (
     HealthResponse,
     TenantKeyCreate,
 )
+from .mcp_server import mcp as mcp_server
+from .mcp_server import set_engine
 from .router import RoutingEngine
 
 logging.basicConfig(
@@ -39,6 +41,9 @@ async def lifespan(app: FastAPI):
 
     app.state.router = RoutingEngine(audit_logger)
     await app.state.router.initialize()
+
+    # MCP-Server mit RoutingEngine verbinden
+    set_engine(app.state.router)
 
     logger.info("✅ LLM-Gateway gestartet — bereit auf Port 8000")
     yield
@@ -65,6 +70,10 @@ app.add_middleware(
 )
 app.add_middleware(RateLimiterMiddleware)
 app.add_middleware(APIKeyAuthMiddleware)
+
+
+# MCP-Server unter /mcp mounten (Streamable HTTP Transport)
+app.mount("/mcp", mcp_server.http_app())
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Monitoring"])
