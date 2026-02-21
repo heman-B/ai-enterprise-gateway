@@ -73,7 +73,8 @@ app.add_middleware(APIKeyAuthMiddleware)
 
 
 # MCP-Server unter /mcp mounten (Streamable HTTP Transport)
-app.mount("/mcp", mcp_server.http_app())
+# path="/" notwendig: FastAPI strippt den /mcp-Prefix, Sub-App muss Route bei / haben
+app.mount("/mcp", mcp_server.http_app(path="/"))
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Monitoring"])
