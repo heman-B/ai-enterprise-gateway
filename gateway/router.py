@@ -8,6 +8,14 @@ import logging
 import time
 import uuid
 
+from .metrics import (
+    CIRCUIT_BREAKER_OPEN,
+    COST_TOTAL,
+    PII_DETECTED_TOTAL,
+    REQUEST_COUNT,
+    REQUEST_LATENCY,
+    TOKENS_TOTAL,
+)
 from .middleware.audit_logger import AuditLogger
 from .middleware.pii_detection import get_pii_detector
 from .models import ChatCompletionRequest, ChatCompletionResponse, Provider, ResidencyZone
@@ -139,6 +147,10 @@ class RoutingEngine:
                 detected_types = list({e.type for e in entities})
                 pii_types.extend(detected_types)
 
+                # Prometheus: PII-Typen zählen
+                for pii_type in detected_types:
+                    PII_DETECTED_TOTAL.labels(pii_type=pii_type).inc()
+
                 # Redaktiere PII für LLM-Provider-Aufruf
                 redacted_content, _ = self._pii_detector.redact(message.content)
                 original_messages.append(message.content)
@@ -235,12 +247,24 @@ class RoutingEngine:
             latency_ms = (time.monotonic() - start_time) * 1000
             self._latency_policy.record(selected_provider, latency_ms)
             self._fallback_policy.record_success(selected_provider)
+            # Prometheus: Latenz und Circuit-Breaker-Status
+            REQUEST_LATENCY.labels(
+                provider=selected_provider.value, model=selected_model
+            ).observe(latency_ms)
+            CIRCUIT_BREAKER_OPEN.labels(provider=selected_provider.value).set(0)
             logger.info(
                 "Anfrage %s: %s/%s in %.0fms", request_id,
                 selected_provider.value, selected_model, latency_ms
             )
         except Exception as exc:
             self._fallback_policy.record_failure(selected_provider)
+            CIRCUIT_BREAKER_OPEN.labels(provider=selected_provider.value).set(
+                0 if self._fallback_policy.is_circuit_closed(selected_provider) else 1
+            )
+            REQUEST_COUNT.labels(
+                provider=selected_provider.value, model=selected_model,
+                tenant_id=tenant_id, status="error"
+            ).inc()
             logger.error("Provider %s fehlgeschlagen: %s", selected_provider.value, exc)
             last_error = exc
 
@@ -258,6 +282,10 @@ class RoutingEngine:
                 latency_ms = (time.monotonic() - start_time) * 1000
                 self._latency_policy.record(fallback_provider, latency_ms)
                 self._fallback_policy.record_success(fallback_provider)
+                REQUEST_LATENCY.labels(
+                    provider=fallback_provider.value, model=fallback_model
+                ).observe(latency_ms)
+                CIRCUIT_BREAKER_OPEN.labels(provider=fallback_provider.value).set(0)
                 logger.info(
                     "✅ Fallback erfolgreich: %s/%s in %.0fms",
                     fallback_provider.value, fallback_model, latency_ms
@@ -281,6 +309,21 @@ class RoutingEngine:
             response.usage.completion_tokens,
         )
         response.usage.cost_usd = cost_usd
+
+        # Prometheus: erfolgreiche Anfrage, Kosten, Token
+        REQUEST_COUNT.labels(
+            provider=selected_provider.value, model=selected_model,
+            tenant_id=tenant_id, status="success"
+        ).inc()
+        COST_TOTAL.labels(
+            provider=selected_provider.value, model=selected_model, tenant_id=tenant_id
+        ).inc(cost_usd)
+        TOKENS_TOTAL.labels(
+            direction="input", provider=selected_provider.value, model=selected_model
+        ).inc(response.usage.prompt_tokens)
+        TOKENS_TOTAL.labels(
+            direction="output", provider=selected_provider.value, model=selected_model
+        ).inc(response.usage.completion_tokens)
 
         # Stufe 5: Audit-Log — NUR SHA256-Hash des Prompts (kein Klartext)
         # Hash vom ORIGINAL-Prompt (vor Redaktion) für Nachvollziehbarkeit

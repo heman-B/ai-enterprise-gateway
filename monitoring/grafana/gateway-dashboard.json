@@ -1,0 +1,206 @@
+{
+  "title": "Enterprise AI Gateway",
+  "uid": "enterprise-ai-gateway",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "tags": ["llm", "gateway", "enterprise"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests/min (by Provider)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(gateway_requests_total[1m]) * 60",
+          "legendFormat": "{{provider}} / {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqpm", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Request Latency p50 / p95 / p99 (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(gateway_request_latency_ms_bucket[5m]))",
+          "legendFormat": "p50 {{provider}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(gateway_request_latency_ms_bucket[5m]))",
+          "legendFormat": "p95 {{provider}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(gateway_request_latency_ms_bucket[5m]))",
+          "legendFormat": "p99 {{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Total Cost (USD)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(gateway_cost_usd_total)",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1, "color": "yellow" },
+              { "value": 10, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Cost/min by Provider",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 8, "w": 10, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(gateway_cost_usd_total[1m]) * 60",
+          "legendFormat": "{{provider}} / {{model}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "currencyUSD", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Circuit Breaker Status",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 4 },
+      "targets": [
+        {
+          "expr": "gateway_circuit_breaker_open",
+          "legendFormat": "{{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "options": { "0": { "text": "OK", "color": "green" }, "1": { "text": "OPEN", "color": "red" } }, "type": "value" }
+          ],
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "PII Detections by Type",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(gateway_pii_detected_total[5m]) * 60",
+          "legendFormat": "{{pii_type}}/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Tokens/min (Input vs Output)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(gateway_tokens_total{direction='input'}[1m]) * 60",
+          "legendFormat": "Input {{provider}}"
+        },
+        {
+          "expr": "rate(gateway_tokens_total{direction='output'}[1m]) * 60",
+          "legendFormat": "Output {{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(gateway_requests_total{status='error'}[5m]) / rate(gateway_requests_total[5m])",
+          "legendFormat": "Error rate {{provider}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.05, "color": "yellow" },
+              { "value": 0.1, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Tokens Total (Cumulative)",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 18, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "sum(gateway_tokens_total{direction='input'})",
+          "legendFormat": "Input tokens"
+        },
+        {
+          "expr": "sum(gateway_tokens_total{direction='output'})",
+          "legendFormat": "Output tokens"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Requests by Tenant",
+      "type": "piechart",
+      "gridPos": { "x": 18, "y": 18, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (gateway_requests_total)",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ]
+    }
+  ]
+}

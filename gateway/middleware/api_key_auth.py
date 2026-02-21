@@ -18,7 +18,10 @@ DATABASE_URL = os.getenv("DATABASE_URL", "./gateway.db")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")  # Admin-Schlüssel für Bootstrap
 
 # Endpunkte ohne Authentifizierungspflicht
-PUBLIC_PATHS = frozenset({"/health", "/ready", "/docs", "/openapi.json", "/redoc"})
+# /metrics: Prometheus-Scraping benötigt keinen API-Schlüssel (Netzwerk-Level-Schutz)
+PUBLIC_PATHS = frozenset({"/health", "/ready", "/docs", "/openapi.json", "/redoc", "/metrics"})
+# Pfad-Präfixe ohne Authentifizierung
+PUBLIC_PREFIXES: tuple[str, ...] = ()
 
 
 def _is_postgres(db_url: str) -> bool:
@@ -68,7 +71,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """API-Schlüssel aus Header extrahieren und Mandanten-ID in Request-State setzen."""
-        if request.url.path in PUBLIC_PATHS:
+        if request.url.path in PUBLIC_PATHS or request.url.path.startswith(PUBLIC_PREFIXES):
             request.state.tenant_id = "public"
             return await call_next(request)
 

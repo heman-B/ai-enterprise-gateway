@@ -33,6 +33,9 @@ python-dotenv>=1.1.0
 # PII-Erkennung: Checksummen-Validierung
 python-stdnum>=1.20
 
+# Monitoring: Prometheus-Metriken
+prometheus-client>=0.21.0
+
 # Test-Abhängigkeiten
 pytest>=8.3.4
 pytest-asyncio>=0.24.0

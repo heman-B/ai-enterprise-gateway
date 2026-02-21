@@ -8,7 +8,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
+from .metrics import get_metrics_response
 from .middleware.api_key_auth import APIKeyAuthMiddleware, create_api_key
 from .middleware.audit_logger import AuditLogger
 from .middleware.rate_limiter import RateLimiterMiddleware
@@ -75,6 +77,13 @@ app.add_middleware(APIKeyAuthMiddleware)
 # MCP-Server unter /mcp mounten (Streamable HTTP Transport)
 # path="/" notwendig: FastAPI strippt den /mcp-Prefix, Sub-App muss Route bei / haben
 app.mount("/mcp", mcp_server.http_app(path="/"))
+
+
+@app.get("/metrics", include_in_schema=False, tags=["Monitoring"])
+async def prometheus_metrics() -> Response:
+    """Prometheus-Metriken im Textformat (für Scraping durch Prometheus-Server)."""
+    data, content_type = get_metrics_response()
+    return Response(content=data, media_type=content_type)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Monitoring"])
