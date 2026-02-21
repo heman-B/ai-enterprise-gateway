@@ -32,27 +32,33 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "./gateway.db")
 
+# MCP-App auf Modul-Ebene erstellen — Lifespan wird im lifespan-Context gestartet
+# path="/" notwendig: FastAPI strippt den /mcp-Prefix, Sub-App muss Route bei / haben
+mcp_http_app = mcp_server.http_app(path="/")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Anwendungs-Lifecycle: Startup-Initialisierung und Shutdown-Bereinigung."""
-    # Startup: Datenbankschema erstellen, Routing-Engine initialisieren
-    audit_logger = AuditLogger(DATABASE_URL)
-    await audit_logger.initialize()
-    app.state.audit_logger = audit_logger
+    # MCP-Lifespan einschließen: startet den StreamableHTTPSessionManager
+    async with mcp_http_app.lifespan(mcp_http_app):
+        # Startup: Datenbankschema erstellen, Routing-Engine initialisieren
+        audit_logger = AuditLogger(DATABASE_URL)
+        await audit_logger.initialize()
+        app.state.audit_logger = audit_logger
 
-    app.state.router = RoutingEngine(audit_logger)
-    await app.state.router.initialize()
+        app.state.router = RoutingEngine(audit_logger)
+        await app.state.router.initialize()
 
-    # MCP-Server mit RoutingEngine verbinden
-    set_engine(app.state.router)
+        # MCP-Server mit RoutingEngine verbinden
+        set_engine(app.state.router)
 
-    logger.info("✅ LLM-Gateway gestartet — bereit auf Port 8000")
-    yield
+        logger.info("✅ LLM-Gateway gestartet — bereit auf Port 8000")
+        yield
 
-    # Shutdown: HTTP-Clients und DB-Verbindungen ordnungsgemäß schließen
-    await app.state.router.shutdown()
-    logger.info("LLM-Gateway heruntergefahren")
+        # Shutdown: HTTP-Clients und DB-Verbindungen ordnungsgemäß schließen
+        await app.state.router.shutdown()
+        logger.info("LLM-Gateway heruntergefahren")
 
 
 app = FastAPI(
@@ -75,8 +81,7 @@ app.add_middleware(APIKeyAuthMiddleware)
 
 
 # MCP-Server unter /mcp mounten (Streamable HTTP Transport)
-# path="/" notwendig: FastAPI strippt den /mcp-Prefix, Sub-App muss Route bei / haben
-app.mount("/mcp", mcp_server.http_app(path="/"))
+app.mount("/mcp", mcp_http_app)
 
 
 @app.get("/metrics", include_in_schema=False, tags=["Monitoring"])
