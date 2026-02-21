@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from .metrics import get_metrics_response
 from .middleware.api_key_auth import APIKeyAuthMiddleware, create_api_key
@@ -189,3 +189,49 @@ async def generate_api_key(payload: TenantKeyCreate) -> dict:
         "api_key": raw_key,
         "warning": "Schlüssel wird nicht erneut angezeigt. Sofort sicher speichern!",
     }
+
+
+@app.get("/admin/audit/verify", tags=["Admin"], include_in_schema=False)
+async def verify_audit_chain(request: Request) -> dict:
+    """
+    Hash-Kette des Audit-Logs verifizieren.
+
+    Prüft jeden Datensatz mathematisch:
+    - prev_hash stimmt mit record_hash des Vorgängers überein
+    - record_hash == SHA256(Felder + prev_hash)
+
+    Jede Manipulation an einem Datensatz bricht die Kette ab diesem Punkt.
+
+    Returns:
+        {"chain_valid": true, "records_checked": N}
+        {"chain_valid": false, "records_checked": N, "broken_at": "id", "reason": "..."}
+    """
+    audit_logger = request.app.state.audit_logger
+    return await audit_logger.verify_chain()
+
+
+@app.post("/admin/compliance-export", tags=["Admin"], include_in_schema=False)
+async def compliance_export(request: Request) -> StreamingResponse:
+    """
+    DSGVO-Compliance-Export als ZIP herunterladen.
+
+    Inhalt des Archivs:
+    - audit_log.jsonl         — alle Audit-Datensätze (JSON Lines)
+    - integrity_manifest.json — SHA256-Hashes aller Datensätze + Gesamt-Chain-Hash
+    - system_config.json      — Gateway-Version, Provider, PII-Typen, Retentionsrichtlinie
+
+    Dieses Bundle kann direkt an Enterprise-Kunden oder Datenschutzbeauftragte gesendet werden.
+    """
+    audit_logger = request.app.state.audit_logger
+    zip_bytes = await audit_logger.build_compliance_bundle(
+        gateway_version=app.version
+    )
+
+    import time as _time
+
+    filename = f"compliance-export-{int(_time.time())}.zip"
+    return StreamingResponse(
+        iter([zip_bytes]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
