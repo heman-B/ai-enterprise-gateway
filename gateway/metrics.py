@@ -43,6 +43,12 @@ CIRCUIT_BREAKER_OPEN = Gauge(
     ["provider"],
 )
 
+CACHE_HIT_TOTAL = Counter(
+    "gateway_cache_hit_total",
+    "Cache-Treffer im semantischen Response-Cache",
+    ["provider", "model"],
+)
+
 
 def get_metrics_response() -> tuple[bytes, str]:
     """Prometheus-Metriken im Textformat zurückgeben."""

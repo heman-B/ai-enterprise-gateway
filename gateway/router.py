@@ -5,10 +5,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
 import uuid
 
+from .cache.semantic_cache import SemanticCache
+from .middleware.api_key_auth import get_tenant_budget
+from .middleware.token_budget import TokenBudgetManager
 from .metrics import (
+    CACHE_HIT_TOTAL,
     CIRCUIT_BREAKER_OPEN,
     COST_TOTAL,
     PII_DETECTED_TOTAL,
@@ -89,14 +94,27 @@ class RoutingEngine:
             self._tokenizer = tiktoken.get_encoding("cl100k_base")
         except Exception:
             logger.warning("tiktoken nicht verfügbar — verwende Zeichenanzahl-Approximation")
+        # Semantischer Cache (nur wenn REDIS_URL gesetzt — fail-open wenn nicht)
+        redis_url = os.getenv("REDIS_URL")
+        self._semantic_cache: SemanticCache | None = SemanticCache(redis_url=redis_url) if redis_url else None
+        if self._semantic_cache:
+            logger.info("Semantischer Cache aktiviert (Redis: %s)", redis_url)
+        # Token-Budget-Manager (teilt Redis-URL mit semantischem Cache)
+        self._budget_manager = TokenBudgetManager(redis_url=redis_url)
+
+    @property
+    def semantic_cache(self) -> SemanticCache | None:
+        return self._semantic_cache
 
     async def initialize(self) -> None:
-        """Provider-Clients und Datenbank initialisieren."""
+        """Provider-Clients, Datenbank und Budget-Manager initialisieren."""
         await self._factory.initialize()
+        await self._budget_manager.initialize()
 
     async def shutdown(self) -> None:
         """Alle HTTP-Verbindungen ordnungsgemäß schließen."""
         await self._factory.shutdown()
+        await self._budget_manager.close()
 
     def estimate_tokens(self, messages: list) -> int:
         """Token-Anzahl VOR dem API-Aufruf schätzen (verhindert unnötige Kosten)."""
@@ -161,7 +179,66 @@ class RoutingEngine:
                     request_id, detected_types
                 )
 
-        # Schritt 0: Token-Schätzung VOR jedem API-Aufruf (nach PII-Redaktion)
+        # Prompt-Hash VOR jedem API-Aufruf berechnen (Original-Prompt, vor Redaktion)
+        prompt_for_hash = (
+            " ".join(original_messages) if original_messages
+            else " ".join(m.content for m in request.messages)
+        )
+        prompt_hash = hashlib.sha256(prompt_for_hash.encode()).hexdigest()
+
+        # Semantischer Cache-Check (nach PII-Redaktion, vor Provider-Routing)
+        if self._semantic_cache:
+            cached = await self._semantic_cache.get(request.messages)
+            if cached:
+                cached_response = ChatCompletionResponse.model_validate(cached["response"])
+                CACHE_HIT_TOTAL.labels(
+                    provider=cached_response.provider, model=cached_response.model
+                ).inc()
+                REQUEST_COUNT.labels(
+                    provider=cached_response.provider, model=cached_response.model,
+                    tenant_id=tenant_id, status="success",
+                ).inc()
+                await self._audit_logger.log(
+                    request_id=request_id,
+                    tenant_id=tenant_id,
+                    prompt_hash=prompt_hash,
+                    model=cached_response.model,
+                    provider=cached_response.provider,
+                    tokens_in=cached.get("tokens_in", 0),
+                    tokens_out=cached.get("tokens_out", 0),
+                    cost_usd=cached.get("cost_usd", 0.0),
+                    pii_detected=pii_detected,
+                    pii_types=pii_types,
+                    cache_hit=True,
+                )
+                logger.info(
+                    "Cache-Treffer für Anfrage %s (Stufe: %s)",
+                    request_id, cached.get("_cache_level", "exact"),
+                )
+                return cached_response
+
+        # Schritt 0a: Token-Budget prüfen (vor API-Aufruf — kein Budget verbrauchen wenn erschöpft)
+        # Systemkonten (admin, public, anonymous) sind von Budget-Durchsetzung ausgenommen
+        _system_tenants = frozenset({"admin", "public", "anonymous"})
+        if tenant_id not in _system_tenants:
+            budget_limit = await get_tenant_budget(tenant_id)
+            exceeded, used = await self._budget_manager.is_budget_exceeded(tenant_id, budget_limit)
+            if exceeded:
+                from fastapi import HTTPException
+                logger.warning(
+                    "Token-Budget erschöpft für Mandant %s: %d/%d Token verbraucht",
+                    tenant_id, used, budget_limit,
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "monthly_token_budget_exceeded",
+                        "budget": budget_limit,
+                        "used": used,
+                    },
+                )
+
+        # Schritt 0b: Token-Schätzung VOR jedem API-Aufruf (nach PII-Redaktion)
         token_estimate = self.estimate_tokens(request.messages)
         # Tool-Use-Erkennung: Erweiterbar für zukünftige Tool-Calls
         has_tools = False
@@ -176,7 +253,6 @@ class RoutingEngine:
         candidate_providers = self._residency_policy.filter_providers(eu_only)
 
         # Production-Filter: Ollama nur lokal verfügbar (nicht auf Render/Cloud)
-        import os
         is_production = os.getenv("DATABASE_URL", "").startswith("postgres")
         if is_production and Provider.OLLAMA in candidate_providers:
             candidate_providers.remove(Provider.OLLAMA)
@@ -325,14 +401,18 @@ class RoutingEngine:
             direction="output", provider=selected_provider.value, model=selected_model
         ).inc(response.usage.completion_tokens)
 
-        # Stufe 5: Audit-Log — NUR SHA256-Hash des Prompts (kein Klartext)
-        # Hash vom ORIGINAL-Prompt (vor Redaktion) für Nachvollziehbarkeit
-        prompt_for_hash = (
-            " ".join(original_messages) if original_messages
-            else " ".join(m.content for m in request.messages)
-        )
-        prompt_hash = hashlib.sha256(prompt_for_hash.encode()).hexdigest()
+        # Antwort im semantischen Cache speichern (für zukünftige identische/ähnliche Anfragen)
+        if self._semantic_cache:
+            await self._semantic_cache.set(
+                request.messages,
+                response,
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                cost_usd,
+            )
 
+        # Stufe 5: Audit-Log — NUR SHA256-Hash des Prompts (kein Klartext)
+        # prompt_hash wurde bereits früher berechnet (nach PII-Redaktion, vor Cache-Check)
         await self._audit_logger.log(
             request_id=request_id,
             tenant_id=tenant_id,
@@ -345,6 +425,11 @@ class RoutingEngine:
             pii_detected=pii_detected,
             pii_types=pii_types,
         )
+
+        # Stufe 6: Monatlichen Token-Verbrauch aktualisieren (nach erfolgreichem API-Aufruf)
+        if tenant_id not in _system_tenants:
+            total_tokens = response.usage.prompt_tokens + response.usage.completion_tokens
+            await self._budget_manager.increment_usage(tenant_id, total_tokens)
 
         return response
 

@@ -103,7 +103,8 @@ class AuditLogger:
                         pii_detected INTEGER NOT NULL DEFAULT 0,
                         pii_types    TEXT,
                         prev_hash    TEXT,
-                        record_hash  TEXT
+                        record_hash  TEXT,
+                        cache_hit    INTEGER NOT NULL DEFAULT 0
                     )
                     """
                 )
@@ -113,6 +114,10 @@ class AuditLogger:
                 )
                 await conn.execute(
                     "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS record_hash TEXT"
+                )
+                # Session 9: cache_hit-Spalte (nicht Teil der Hash-Kette — reines Metadatum)
+                await conn.execute(
+                    "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS cache_hit INTEGER NOT NULL DEFAULT 0"
                 )
                 await conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, timestamp)"
@@ -132,9 +137,14 @@ class AuditLogger:
                         key_hash               TEXT PRIMARY KEY,
                         is_active              INTEGER NOT NULL DEFAULT 1,
                         rate_limit_per_minute  INTEGER NOT NULL DEFAULT 100,
+                        token_budget_monthly   INTEGER,
                         created_at             DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
                     )
                     """
+                )
+                # Spalte nachrüsten (existierende Deployments)
+                await conn.execute(
+                    "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS token_budget_monthly INTEGER"
                 )
             finally:
                 await conn.close()
@@ -159,14 +169,16 @@ class AuditLogger:
                         pii_detected INTEGER NOT NULL DEFAULT 0,
                         pii_types    TEXT,
                         prev_hash    TEXT,
-                        record_hash  TEXT
+                        record_hash  TEXT,
+                        cache_hit    INTEGER NOT NULL DEFAULT 0
                     )
                     """
                 )
-                # Hash-Ketten-Spalten nachrüsten (SQLite: Exception abfangen)
+                # Hash-Ketten-Spalten + cache_hit nachrüsten (SQLite: Exception abfangen)
                 for col_def in [
                     "ALTER TABLE audit_log ADD COLUMN prev_hash TEXT",
                     "ALTER TABLE audit_log ADD COLUMN record_hash TEXT",
+                    "ALTER TABLE audit_log ADD COLUMN cache_hit INTEGER NOT NULL DEFAULT 0",
                 ]:
                     try:
                         await db.execute(col_def)
@@ -188,10 +200,17 @@ class AuditLogger:
                         key_hash               TEXT PRIMARY KEY,
                         is_active              INTEGER NOT NULL DEFAULT 1,
                         rate_limit_per_minute  INTEGER NOT NULL DEFAULT 100,
+                        token_budget_monthly   INTEGER,
                         created_at             REAL NOT NULL DEFAULT (unixepoch('now'))
                     )
                     """
                 )
+                try:
+                    await db.execute(
+                        "ALTER TABLE api_keys ADD COLUMN token_budget_monthly INTEGER"
+                    )
+                except Exception:
+                    pass  # Spalte existiert bereits
                 await db.commit()
 
         logger.info("Audit-Log-Datenbank initialisiert: %s", self._db_url)
@@ -229,17 +248,20 @@ class AuditLogger:
         cost_usd: float,
         pii_detected: bool = False,
         pii_types: list[str] | None = None,
+        cache_hit: bool = False,
     ) -> None:
         """
         Anfrage-Metadaten in Audit-Log schreiben (mit Hash-Kette).
 
         SICHERHEIT: prompt_hash muss SHA256(raw_prompt) sein — Aufrufer ist verantwortlich.
         Der Insert-Mutex verhindert Race-Conditions beim Lesen des vorherigen Hashes.
+        cache_hit ist NICHT Teil der Hash-Kette (reines Metadatum, kein Tamper-Evidence-Feld).
         """
         pii_types_json = ",".join(sorted(set(pii_types))) if pii_types else None
         record_id = str(uuid.uuid4())
         ts = time.time()
         pii_int = 1 if pii_detected else 0
+        cache_hit_int = 1 if cache_hit else 0
 
         async with self._insert_lock:
             if _is_postgres(self._db_url):
@@ -266,12 +288,12 @@ class AuditLogger:
                         INSERT INTO audit_log
                             (id, request_id, tenant_id, timestamp, prompt_hash,
                              model, provider, tokens_in, tokens_out, cost_usd,
-                             pii_detected, pii_types, prev_hash, record_hash)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                             pii_detected, pii_types, prev_hash, record_hash, cache_hit)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                         """,
                         record_id, request_id, tenant_id, ts, prompt_hash,
                         model, provider, tokens_in, tokens_out, cost_usd,
-                        pii_int, pii_types_json, prev_hash, rec_hash,
+                        pii_int, pii_types_json, prev_hash, rec_hash, cache_hit_int,
                     )
                 finally:
                     await conn.close()
@@ -298,13 +320,13 @@ class AuditLogger:
                         INSERT INTO audit_log
                             (id, request_id, tenant_id, timestamp, prompt_hash,
                              model, provider, tokens_in, tokens_out, cost_usd,
-                             pii_detected, pii_types, prev_hash, record_hash)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             pii_detected, pii_types, prev_hash, record_hash, cache_hit)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             record_id, request_id, tenant_id, ts, prompt_hash,
                             model, provider, tokens_in, tokens_out, cost_usd,
-                            pii_int, pii_types_json, prev_hash, rec_hash,
+                            pii_int, pii_types_json, prev_hash, rec_hash, cache_hit_int,
                         ),
                     )
                     await db.commit()
@@ -640,3 +662,45 @@ class AuditLogger:
             "total_requests_with_pii": pii_rows[0][0] if pii_rows else 0,
             "pii_type_breakdown": pii_type_counts,
         }
+
+    async def get_monthly_costs_by_tenant(self, since_timestamp: float | None = None) -> dict[str, float]:
+        """
+        Kosten pro Mandant für den aktuellen Monat aus dem Audit-Log.
+
+        Returns:
+            {tenant_id: total_cost_usd}
+        """
+        since = since_timestamp or (time.time() - 31 * 86400)
+
+        if _is_postgres(self._db_url):
+            import asyncpg
+
+            conn = await asyncpg.connect(self._db_url)
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT tenant_id, COALESCE(SUM(cost_usd), 0) AS total_cost
+                    FROM audit_log
+                    WHERE timestamp >= $1
+                    GROUP BY tenant_id
+                    """,
+                    since,
+                )
+                return {row["tenant_id"]: float(row["total_cost"]) for row in rows}
+            finally:
+                await conn.close()
+        else:
+            import aiosqlite
+
+            async with aiosqlite.connect(self._db_url) as db:
+                async with db.execute(
+                    """
+                    SELECT tenant_id, COALESCE(SUM(cost_usd), 0) AS total_cost
+                    FROM audit_log
+                    WHERE timestamp >= ?
+                    GROUP BY tenant_id
+                    """,
+                    (since,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    return {row[0]: float(row[1]) for row in rows}

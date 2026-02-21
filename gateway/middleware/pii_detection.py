@@ -100,10 +100,16 @@ PLZ_PATTERN = re.compile(r"\b[0-9]{5}\b")
 
 
 # Straßenname: Mindestens 3 Buchstaben + "straße", "weg", "platz", etc.
-# Unterstützt: Hauptstraße 42, Berliner Straße 15, Rosenweg 8, Parkstraße 23
-# Optional: Adjektiv vor Straßentyp (z.B. "Berliner Straße")
+# Unterstützt zwei Formen:
+#   - Zusammengesetzt: Hauptstraße 42, Mozartstraße 5, Rosenweg 8
+#   - Zweiteilig: Berliner Straße 15, Am Ring 3
 STRASSE_PATTERN = re.compile(
-    r"(?:[A-ZÄÖÜ][a-zäöüß]+\s+)?[A-ZÄÖÜ][a-zäöüßA-ZÄÖÜ]{2,}(straße|str\.|weg|platz|allee|gasse|ring|damm)\s+\d{1,4}[a-z]?\b",
+    r"(?:"
+    r"[A-ZÄÖÜ][a-zäöüßA-ZÄÖÜ]{2,}(?:straße|str\.|weg|platz|allee|gasse|ring|damm)"  # Hauptstraße, Rosenweg
+    r"|"
+    r"[A-ZÄÖÜ][a-zäöüß]+\s+(?:Straße|Str\.|Weg|Platz|Allee|Gasse|Ring|Damm)"  # Berliner Straße
+    r")"
+    r"\s+\d{1,4}[a-z]?\b",
     re.IGNORECASE,
 )
 
@@ -185,22 +191,24 @@ class GermanPIIDetector:
                 )
             )
 
-        # 4. Handynummer
-        for match in HANDYNUMMER_PATTERN.finditer(text):
-            entities.append(
-                PIIEntity(
-                    type="HANDYNUMMER",
-                    value_hash=self._hash_value(match.group(0)),
-                    start=match.start(),
-                    end=match.end(),
-                    confidence=0.95,
-                )
-            )
-
-        # 5. PLZ (nur wenn nicht in IBAN enthalten)
+        # 4. Handynummer (nicht in IBAN enthalten — verhindert Ziffernfolgen innerhalb von IBANs)
         iban_ranges = [(e.start, e.end) for e in entities if e.type == "IBAN"]
-        for match in PLZ_PATTERN.finditer(text):
+        for match in HANDYNUMMER_PATTERN.finditer(text):
             if not any(start <= match.start() < end for start, end in iban_ranges):
+                entities.append(
+                    PIIEntity(
+                        type="HANDYNUMMER",
+                        value_hash=self._hash_value(match.group(0)),
+                        start=match.start(),
+                        end=match.end(),
+                        confidence=0.95,
+                    )
+                )
+
+        # 5. PLZ (nicht in IBAN oder Handynummer enthalten — verhindert "49172" aus "+49172")
+        excluded_ranges = [(e.start, e.end) for e in entities if e.type in ("IBAN", "HANDYNUMMER")]
+        for match in PLZ_PATTERN.finditer(text):
+            if not any(start <= match.start() < end for start, end in excluded_ranges):
                 entities.append(
                     PIIEntity(
                         type="PLZ",

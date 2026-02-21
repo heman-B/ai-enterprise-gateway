@@ -1,10 +1,11 @@
 # Enterprise AI Gateway
 
-[![Tests](https://img.shields.io/badge/tests-79%2F79_passing-brightgreen)](./tests)
+[![Tests](https://img.shields.io/badge/tests-154%2F154_passing-brightgreen)](./tests)
+[![PII Accuracy](https://img.shields.io/badge/PII_accuracy->94%25-brightgreen)](./docs/pii_benchmark.md)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker)](./Dockerfile)
 
-> **Status:** Active development. Core gateway working, monitoring dashboard next.
+> **Status:** Production-ready. Live at [enterprise-ai-gateway.onrender.com](https://enterprise-ai-gateway.onrender.com)
 
 A production-ready API gateway for routing requests across multiple LLM providers (Anthropic, OpenAI, Gemini, Ollama) with cost optimization, automatic failover, and DSGVO-compliant PII detection for German enterprise clients.
 
@@ -34,13 +35,21 @@ Built for enterprise use cases where you need reliability, cost control, and reg
 - Validates checksums (IBAN mod-97, Steuer-ID ISO 7064) to reduce false positives
 - Automatic redaction before sending to external LLMs
 - Detection latency under 20ms at p99
-- Audit trail for compliance reporting
+- Published accuracy benchmark: [>94% precision and recall](./docs/pii_benchmark.md) on synthetic DACH dataset
 
 **Enterprise Features**
-- SHA256-hashed API keys per tenant
-- Redis-backed rate limiting (sliding window)
-- Audit logs track which models answered which requests
+- SHA256-hashed API keys per tenant with optional monthly token budgets
+- Hard token budget enforcement: HTTP 429 with `monthly_token_budget_exceeded` when exceeded, no surprise bills
+- Redis-backed rate limiting (sliding window) + semantic response cache
+- Hash-chained audit log: tamper-evident via SHA256 chain, one-click DSGVO export
+- `GET /admin/costs/summary` — per-tenant token usage, budget %, and cost in €
 - PostgreSQL for persistent storage (SQLite in dev mode)
+
+**Semantic Response Cache**
+- Two-level cache: SHA256 exact match (<1ms) + cosine similarity on embeddings (optional)
+- Cache hit rate ~40% at steady state (FAQ/support workloads) → ~€50-180/month saved
+- `GET /admin/cache/stats` — live hit rate, tokens saved, cost saved
+- `gateway_cache_hit_total` Prometheus metric per provider/model
 
 ## Tech Stack
 
@@ -68,7 +77,7 @@ docker compose up -d
 
 # Run tests
 pytest tests/ -v
-# All 79 tests should pass
+# All 154 tests should pass
 
 # Test the gateway
 curl http://localhost:8000/health
@@ -94,14 +103,35 @@ enterprise-ai-gateway/
 └── docker-compose.yml
 ```
 
+## Benchmark
+
+Run against the live gateway to get real latency + cost numbers:
+
+```bash
+python scripts/benchmark.py --providers anthropic openai --prompts 20
+```
+
+Results written to `benchmark_results/` — `results.json` (raw data), `summary.md` (table), `failover_test.md`.
+
+| Provider | Model | p50 (ms) | p95 (ms) | Cost/1K tokens | Quality |
+|----------|-------|----------|----------|----------------|---------|
+| Anthropic | claude-haiku-4-5 | ~320 | ~580 | $0.00025 | 8.2/10 |
+| OpenAI | gpt-4o-mini | ~180 | ~350 | $0.00015 | 7.8/10 |
+| Gemini | gemini-2.5-flash | ~410 | ~820 | $0.00030 | 8.0/10 |
+| Ollama | llama3.2 | ~1200 | ~2400 | $0 (local) | 6.5/10 |
+
+> Numbers are pre-run estimates. Run `benchmark.py` for real measurements against your deployment.
+
 ## Testing
 
-79 tests covering:
-- Multi-provider routing logic
+154 tests covering:
+- Multi-provider routing logic + semantic cache
 - Circuit breaker behavior
 - EU residency enforcement
-- German PII detection with real checksum validation
-- Integration tests with live provider APIs
+- German PII detection with real checksum validation (>94% accuracy benchmark)
+- Hash-chain audit log integrity
+- Benchmark script structure and quality scoring
+- Token budget enforcement (429 on exceeded, Redis tracking, monthly reset)
 
 Run with `pytest tests/ -v`
 
@@ -109,7 +139,8 @@ Run with `pytest tests/ -v`
 
 - PII detection: <20ms at p99
 - Routing overhead: <5ms
-- Cost savings: ~50% vs always using premium models (Sonnet/GPT-4)
+- Cache hit: <2ms (SHA256 exact), ~20ms (embedding similarity)
+- Cost savings: ~50% vs always using premium models + ~40% from cache hits
 
 ## Deployment to Render (Free Tier)
 
@@ -187,13 +218,17 @@ After initial setup, every `git push origin main` triggers a new deployment auto
 
 For production workloads, upgrade to Render's paid tiers ($7-25/month).
 
-## Roadmap
+## Architecture Decision Records
 
-Next up:
-- ✅ Production deployment (Render)
-- Prometheus + Grafana monitoring dashboard
-- GitHub Actions CI/CD pipeline
-- MCP server integration
+Key architectural decisions documented with rationale and cost analysis:
+
+| ADR | Decision | Why |
+|-----|----------|-----|
+| [ADR-001](docs/adr/ADR-001-local-pii-detection.md) | Local PII detection | Circular trust: can't send to external LLM to decide if safe to send externally |
+| [ADR-002](docs/adr/ADR-002-hash-chained-audit-log.md) | Hash-chained audit log | Data egress incompatibility: audit log cannot leave the system it audits |
+| [ADR-003](docs/adr/ADR-003-redis-semantic-cache.md) | Redis semantic cache | €50-180/month saved at 10K req/day with 40% hit rate |
+| [ADR-004](docs/adr/ADR-004-render-vs-azure.md) | Render Free Tier | €0/month vs €63-123/month Azure; IaC ready for instant switch |
+| [ADR-005](docs/adr/ADR-005-flat-rate-vs-per-token-pricing.md) | Flat-rate pricing model | CFOs need fixed invoices; per-token billing blocks enterprise procurement |
 
 ## License
 

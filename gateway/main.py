@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 from .metrics import get_metrics_response
-from .middleware.api_key_auth import APIKeyAuthMiddleware, create_api_key
+from .middleware.api_key_auth import APIKeyAuthMiddleware, create_api_key, get_all_active_tenants
 from .middleware.audit_logger import AuditLogger
 from .middleware.rate_limiter import RateLimiterMiddleware
 from .models import (
@@ -50,14 +50,19 @@ async def lifespan(app: FastAPI):
         app.state.router = RoutingEngine(audit_logger)
         await app.state.router.initialize()
 
+        # Semantischen Cache auf app.state exponieren (für /admin/cache/stats)
+        app.state.semantic_cache = app.state.router.semantic_cache
+
         # MCP-Server mit RoutingEngine verbinden
         set_engine(app.state.router)
 
         logger.info("✅ LLM-Gateway gestartet — bereit auf Port 8000")
         yield
 
-        # Shutdown: HTTP-Clients und DB-Verbindungen ordnungsgemäß schließen
+        # Shutdown: HTTP-Clients, Cache und DB-Verbindungen ordnungsgemäß schließen
         await app.state.router.shutdown()
+        if app.state.semantic_cache:
+            await app.state.semantic_cache.close()
         logger.info("LLM-Gateway heruntergefahren")
 
 
@@ -183,10 +188,15 @@ async def generate_api_key(payload: TenantKeyCreate) -> dict:
     Admin-Endpunkt: neuen API-Schlüssel für Mandanten erstellen.
     Schlüssel wird EINMALIG im Klartext zurückgegeben — sicher speichern!
     """
-    raw_key = await create_api_key(payload.tenant_id, payload.rate_limit_per_minute)
+    raw_key = await create_api_key(
+        payload.tenant_id,
+        payload.rate_limit_per_minute,
+        payload.token_budget_monthly,
+    )
     return {
         "tenant_id": payload.tenant_id,
         "api_key": raw_key,
+        "token_budget_monthly": payload.token_budget_monthly,
         "warning": "Schlüssel wird nicht erneut angezeigt. Sofort sicher speichern!",
     }
 
@@ -208,6 +218,92 @@ async def verify_audit_chain(request: Request) -> dict:
     """
     audit_logger = request.app.state.audit_logger
     return await audit_logger.verify_chain()
+
+
+@app.get("/admin/cache/stats", tags=["Admin"], include_in_schema=False)
+async def cache_stats(request: Request) -> dict:
+    """
+    Semantischer Cache-Status und Einsparungsstatistiken.
+
+    Returns:
+        total_requests: Gesamtzahl der Anfragen die durch den Cache geprüft wurden
+        cache_hits: Davon als Cache-Treffer bedient
+        hit_rate_pct: Trefferquote in Prozent
+        tokens_saved: Eingesparte LLM-Token (input + output) durch Cache-Treffer
+        cost_saved_usd: Eingesparte Kosten in USD durch Cache-Treffer
+    """
+    cache = getattr(request.app.state, "semantic_cache", None)
+    if cache is None:
+        return {
+            "enabled": False,
+            "message": "Semantischer Cache nicht aktiv (REDIS_URL nicht gesetzt)",
+        }
+    stats = await cache.get_stats()
+    stats["enabled"] = True
+    return stats
+
+
+@app.get("/admin/costs/summary", tags=["Admin"], include_in_schema=False)
+async def costs_summary(request: Request) -> dict:
+    """
+    Kostenzusammenfassung pro Mandant für den laufenden Monat.
+
+    Gibt für jeden aktiven Mandanten zurück:
+    - tokens_used:           verbrauchte Token (aus Redis)
+    - token_budget_monthly:  monatliches Limit (NULL = unbegrenzt)
+    - budget_consumed_pct:   prozentualer Verbrauch (NULL wenn unbegrenzt)
+    - cost_usd:              Kosten in USD (aus Audit-Log)
+    - cost_eur:              Kosten in EUR (Kurs: 0.92)
+    """
+    import time as _time
+    from datetime import datetime
+
+    # Monatsstart berechnen (erster Tag des aktuellen Monats, UTC)
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1).timestamp()
+    month_str = now.strftime("%Y-%m")
+
+    # Monatliche Kosten pro Mandant aus Audit-Log
+    audit_logger = request.app.state.audit_logger
+    monthly_costs = await audit_logger.get_monthly_costs_by_tenant(since_timestamp=month_start)
+
+    # Aktive Mandanten mit Budget-Limits aus DB
+    tenants = await get_all_active_tenants()
+
+    # Token-Verbrauch aus Redis (falls Budget-Manager aktiv)
+    budget_manager = getattr(request.app.state.router, "_budget_manager", None)
+
+    EUR_PER_USD = 0.92
+    results = []
+
+    for tenant_id, budget_limit in sorted(tenants.items()):
+        usage = 0
+        if budget_manager:
+            usage = await budget_manager.get_usage(tenant_id)
+
+        cost_usd = monthly_costs.get(tenant_id, 0.0)
+        cost_eur = round(cost_usd * EUR_PER_USD, 4)
+
+        budget_pct = (
+            round(usage / budget_limit * 100, 1)
+            if budget_limit and budget_limit > 0
+            else None
+        )
+
+        results.append({
+            "tenant_id": tenant_id,
+            "tokens_used": usage,
+            "token_budget_monthly": budget_limit,
+            "budget_consumed_pct": budget_pct,
+            "cost_usd": round(cost_usd, 4),
+            "cost_eur": cost_eur,
+        })
+
+    return {
+        "month": month_str,
+        "eur_rate": EUR_PER_USD,
+        "tenants": results,
+    }
 
 
 @app.post("/admin/compliance-export", tags=["Admin"], include_in_schema=False)

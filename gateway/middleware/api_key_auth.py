@@ -107,7 +107,11 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-async def create_api_key(tenant_id: str, rate_limit: int = 100) -> str:
+async def create_api_key(
+    tenant_id: str,
+    rate_limit: int = 100,
+    token_budget_monthly: int | None = None,
+) -> str:
     """
     Neuen API-Schlüssel für einen Mandanten erstellen.
 
@@ -124,19 +128,20 @@ async def create_api_key(tenant_id: str, rate_limit: int = 100) -> str:
 
         conn = await asyncpg.connect(DATABASE_URL)
         try:
-            # PostgreSQL: INSERT ... ON CONFLICT
             await conn.execute(
                 """
                 INSERT INTO api_keys
-                    (tenant_id, key_hash, is_active, rate_limit_per_minute)
-                VALUES ($1, $2, 1, $3)
+                    (tenant_id, key_hash, is_active, rate_limit_per_minute, token_budget_monthly)
+                VALUES ($1, $2, 1, $3, $4)
                 ON CONFLICT (key_hash) DO UPDATE SET
                     is_active = 1,
-                    rate_limit_per_minute = $3
+                    rate_limit_per_minute = $3,
+                    token_budget_monthly = $4
                 """,
                 tenant_id,
                 key_hash,
                 rate_limit,
+                token_budget_monthly,
             )
         finally:
             await conn.close()
@@ -147,16 +152,86 @@ async def create_api_key(tenant_id: str, rate_limit: int = 100) -> str:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO api_keys
-                    (tenant_id, key_hash, is_active, rate_limit_per_minute)
-                VALUES (?, ?, 1, ?)
+                    (tenant_id, key_hash, is_active, rate_limit_per_minute, token_budget_monthly)
+                VALUES (?, ?, 1, ?, ?)
                 """,
-                (tenant_id, key_hash, rate_limit),
+                (tenant_id, key_hash, rate_limit, token_budget_monthly),
             )
             await db.commit()
 
-    logger.info("Neuer API-Schlüssel erstellt für Mandant: %s", tenant_id)
-    # Klartext-Schlüssel nur hier zurückgeben — wird danach nie wieder verfügbar
+    logger.info(
+        "Neuer API-Schlüssel erstellt für Mandant: %s (Budget: %s Token/Monat)",
+        tenant_id, token_budget_monthly or "unbegrenzt",
+    )
     return raw_key
+
+
+async def get_tenant_budget(tenant_id: str) -> int | None:
+    """
+    Token-Budget des Mandanten aus der Datenbank lesen.
+
+    Returns:
+        token_budget_monthly (int) oder None (unbegrenzt)
+    """
+    try:
+        if _is_postgres(DATABASE_URL):
+            import asyncpg
+
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT token_budget_monthly FROM api_keys WHERE tenant_id = $1 AND is_active = 1 LIMIT 1",
+                    tenant_id,
+                )
+                return row["token_budget_monthly"] if row else None
+            finally:
+                await conn.close()
+        else:
+            import aiosqlite
+
+            async with aiosqlite.connect(DATABASE_URL) as db:
+                async with db.execute(
+                    "SELECT token_budget_monthly FROM api_keys WHERE tenant_id = ? AND is_active = 1 LIMIT 1",
+                    (tenant_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else None
+    except Exception as exc:
+        logger.warning("Budget-Lookup-Fehler für %s: %s", tenant_id, exc)
+        return None
+
+
+async def get_all_active_tenants() -> dict[str, int | None]:
+    """
+    Alle aktiven Mandanten mit ihrem Token-Budget lesen.
+
+    Returns:
+        {tenant_id: token_budget_monthly}  (None = unbegrenzt)
+    """
+    try:
+        if _is_postgres(DATABASE_URL):
+            import asyncpg
+
+            conn = await asyncpg.connect(DATABASE_URL)
+            try:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT tenant_id, token_budget_monthly FROM api_keys WHERE is_active = 1"
+                )
+                return {row["tenant_id"]: row["token_budget_monthly"] for row in rows}
+            finally:
+                await conn.close()
+        else:
+            import aiosqlite
+
+            async with aiosqlite.connect(DATABASE_URL) as db:
+                async with db.execute(
+                    "SELECT DISTINCT tenant_id, token_budget_monthly FROM api_keys WHERE is_active = 1"
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    return {row[0]: row[1] for row in rows}
+    except Exception as exc:
+        logger.warning("Mandanten-Lookup-Fehler: %s", exc)
+        return {}
 
 
 async def revoke_api_key(tenant_id: str) -> int:

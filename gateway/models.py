@@ -83,3 +83,8 @@ class TenantKeyCreate(BaseModel):
 
     tenant_id: str
     rate_limit_per_minute: int = Field(default=100, ge=1, le=10000)
+    token_budget_monthly: int | None = Field(
+        default=None,
+        ge=1,
+        description="Monatliches Token-Limit (NULL = unbegrenzt). Überschreitung → HTTP 429.",
+    )
