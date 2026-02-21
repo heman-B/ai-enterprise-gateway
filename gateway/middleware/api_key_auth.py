@@ -7,10 +7,9 @@ import logging
 import os
 import secrets
 
-from fastapi import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +82,11 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                 api_key = auth_header[7:]
 
         if not api_key:
-            raise HTTPException(
+            # JSONResponse statt HTTPException: BaseHTTPMiddleware wraps exceptions
+            # in ExceptionGroup via anyio → führt zu 500 statt 401
+            return JSONResponse(
                 status_code=401,
-                detail="API-Schlüssel fehlt. Header 'X-API-Key' oder 'Authorization: Bearer <key>' erforderlich.",
+                content={"detail": "API-Schlüssel fehlt. Header 'X-API-Key' oder 'Authorization: Bearer <key>' erforderlich."},
             )
 
         # Admin-Key-Check: ADMIN_API_KEY aus .env hat Vorrang (für Bootstrap)
@@ -97,9 +98,9 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         # Normaler Mandanten-Schlüssel: Datenbank-Lookup
         tenant_id = await self._find_tenant(api_key)
         if not tenant_id:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=401,
-                detail="Ungültiger oder inaktiver API-Schlüssel.",
+                content={"detail": "Ungültiger oder inaktiver API-Schlüssel."},
             )
 
         request.state.tenant_id = tenant_id
